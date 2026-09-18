@@ -502,14 +502,14 @@ The architecture can support a range of technologies depending on deployment req
 
 Potential technologies include:
 
-* **Rust** — concurrent, high-performance services and latency-sensitive components
-* **Python** — research, analytics, data processing, and strategy development
-* **WebSockets** — real-time data streams
-* **REST APIs** — external service integration
-* **PostgreSQL** — persistent events, trades, and positions
-* **Redis** — caching and low-latency state
-* **Message queues / event streams** — asynchronous event processing
-* **Docker** — reproducible deployment
+* **Rust** - concurrent, high-performance services and latency-sensitive components
+* **Python** - research, analytics, data processing, and strategy development
+* **WebSockets** - real-time data streams
+* **REST APIs** - external service integration
+* **PostgreSQL** - persistent events, trades, and positions
+* **Redis** - caching and low-latency state
+* **Message queues / event streams** - asynchronous event processing
+* **Docker** - reproducible deployment
 
 The technology stack may evolve as the project develops.
 
