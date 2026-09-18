@@ -1,637 +1,331 @@
 # Social Signal Trading Bot
 
-**Real-time social signal trading bot for breaking-news detection, automated token trading, algorithmic strategies, and low-latency order execution.**
+**An event-driven crypto trading bot that turns real-time social media and news signals into validated, risk-checked token trades.**
 
-Social Signal Trading Bot is an event-driven **crypto trading bot** that monitors social media and news sources for market-moving events, evaluates real-time market conditions, and can automatically execute token buy and sell strategies.
+<!-- Replace <owner>/<repo> with your GitHub path. Remove badges you don't want. -->
+![Status: early development](https://img.shields.io/badge/status-early%20development-orange)
+![License](https://img.shields.io/github/license/<owner>/<repo>)
 
-The project combines **social media monitoring, real-time data ingestion, trading signal detection, market-data analysis, risk management, and automated order execution** into a modular trading system.
+Social Signal Trading Bot monitors social platforms such as X (Twitter) and news sources for market-moving events, checks each signal against live market conditions (price, volume, liquidity, slippage), and, when the strategy and risk limits allow, submits automated buy and sell orders.
 
-The core objective is to reduce the time between a market-relevant event being published and a trading system being able to evaluate and act on that event.
+It is built as a modular, low-latency pipeline:
 
-```text
-Social Media / News
-        │
-        ▼
-Real-Time Event Ingestion
-        │
-        ▼
-Signal Detection
-        │
-        ▼
-Signal Validation
-        │
-        ▼
-Market Analysis
-        │
-        ▼
-Trading Strategy
-        │
-        ▼
-Risk Management
-        │
-        ▼
-Order Execution
-        │
-        ▼
-Position & Performance Monitoring
+**social monitoring → signal detection → market validation → strategy → risk management → order execution → position tracking**
+
+> [!NOTE]
+> **Project status: early development.** The architecture described here is the design target. See the [Roadmap](#roadmap) for what is implemented. Use paper trading before any live execution.
+
+## Table of Contents
+
+- [What is a social signal trading bot?](#what-is-a-social-signal-trading-bot)
+- [Key features](#key-features)
+- [How it works](#how-it-works)
+- [Signal detection and validation](#signal-detection-and-validation)
+- [Strategy and risk management](#strategy-and-risk-management)
+- [Order execution and position management](#order-execution-and-position-management)
+- [Latency measurement](#latency-measurement)
+- [Reliability and observability](#reliability-and-observability)
+- [Backtesting and paper trading](#backtesting-and-paper-trading)
+- [Technology stack](#technology-stack)
+- [Project structure](#project-structure)
+- [Getting started](#getting-started)
+- [Security and responsible use](#security-and-responsible-use)
+- [Frequently asked questions](#frequently-asked-questions)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [Disclaimer](#disclaimer)
+- [License](#license)
+
+## What is a social signal trading bot?
+
+A **social signal trading bot** is an automated trading system that monitors social media, news, and other information sources for events that may influence markets, then combines those events with real-time market data to make trading decisions.
+
+Traditional trading bots rely mainly on price, volume, order books, and technical indicators. A social signal trading bot adds an information layer: a new announcement from a tracked project or influential account is detected, classified, and compared with current liquidity, price movement, and volume *before* a trading decision is made.
+
+Detecting a post is the easy part. A reliable system also has to handle duplicate events, stale market data, latency, position sizing, slippage, API failures, rate limits, partial fills, position reconciliation, and observability.
+
+**Design goal:** how quickly and reliably can an automated system transform an external information event into a validated trading decision and measurable execution?
+
+## Key features
+
+- **Real-time social and news monitoring**: track accounts, keywords, token symbols, project names, exchange announcements, protocol updates, and breaking news.
+- **Structured signal detection**: normalize raw events, detect entities, classify event types, and generate trading signals that filter out general social-media noise.
+- **Market signal validation**: a social event never becomes a trade automatically. Signals are checked against price, momentum, volume, liquidity, spread, volatility, market depth, onchain activity, and existing exposure.
+- **Pluggable strategy engine**: strategy logic is separated from data ingestion and exchange integration, so strategies can be tested without rewriting execution code.
+- **Independent risk engine**: position limits, loss limits, slippage limits, cooldowns, and an emergency shutdown, enforced outside individual strategies.
+- **Automated buy and sell execution**: order status tracking, timeouts, retries, rejected orders, partial fills, slippage measurement, and reconciliation.
+- **End-to-end latency measurement**: timestamps at every pipeline stage make reaction time measurable instead of assumed.
+- **Backtesting and paper trading**: evaluate signals and strategies on historical or live data without sending real orders.
+- **Observability**: metrics and structured logs that connect the original social event to the resulting trade.
+
+## How it works
+
+The system is event-driven: each stage runs independently and communicates through typed events. This makes it easier to scale components, process events asynchronously, isolate failures, replay historical events, and add new strategies.
+
+```mermaid
+flowchart LR
+    A[Social media and news] --> B[Ingestion and normalization]
+    B --> C[Signal detection]
+    C --> D[Signal validation]
+    M[Market data] --> D
+    D --> E[Strategy engine]
+    M --> E
+    E --> F[Risk engine]
+    F --> G[Order execution]
+    G --> H[Position and performance monitoring]
 ```
 
-## What Is a Social Signal Trading Bot?
+| Event | Produced by | Meaning |
+| --- | --- | --- |
+| `SocialEvent` | Ingestion | A normalized post, announcement, or news item |
+| `SignalEvent` | Signal detection | A structured, classified trading signal |
+| `ValidatedSignal` | Signal validation | A signal confirmed against market conditions |
+| `TradeIntent` | Strategy engine | A BUY, SELL, HOLD, or IGNORE decision |
+| `OrderRequest` | Risk engine | A risk-approved order sent to execution |
+| `OrderUpdate` | Execution | Order status changes and fills |
+| `PositionUpdate` | Position manager | Updated exposure, entry, and PnL |
 
-A **social signal trading bot** is an automated trading system that monitors social media, news, and other information sources for events that may influence financial markets.
+### Example end-to-end flow
 
-Traditional trading systems often rely primarily on market data such as price, volume, order books, and technical indicators.
+1. A tracked account publishes a market-relevant announcement.
+2. The event is received and normalized.
+3. The relevant token is identified and a signal is generated.
+4. Liquidity, spread, volume, and price momentum are checked.
+5. The strategy evaluates the validated signal and emits a `TradeIntent`.
+6. The risk engine checks position size, exposure, cooldowns, and loss limits.
+7. The order is submitted and execution is confirmed.
+8. The position is updated and every stage timestamp is recorded for analysis.
 
-A social-signal trading system adds another information layer:
+## Signal detection and validation
 
-```text
-External Information
-        +
-Real-Time Market Data
-        ↓
-Trading Signal
-        ↓
-Automated Decision
-        ↓
-Order Execution
+**Detection** converts raw events into structured signals:
+
+`raw event → normalization → entity detection → event classification → signal generation`
+
+**Validation** compares each signal with real-time market conditions before it can reach the strategy:
+
+- token price and price momentum
+- trading volume and liquidity
+- spread and market depth
+- volatility
+- onchain activity
+- existing exposure in the same token
+
+Duplicate-signal protection and stale-data checks apply at this stage as well.
+
+## Strategy and risk management
+
+A strategy receives **market state + social signal + portfolio state + risk state** and returns a `TradeIntent` (`BUY`, `SELL`, `HOLD`, or `IGNORE`). Strategies can expose configurable confidence thresholds, entry and exit conditions, position sizing, cooldown periods, liquidity requirements, and slippage limits.
+
+Automated trading requires explicit risk controls, enforced independently of strategy code where possible:
+
+| Control | Purpose |
+| --- | --- |
+| Maximum position size | Cap exposure to any single token |
+| Maximum portfolio exposure | Cap total capital at risk |
+| Maximum daily loss | Stop trading after a defined drawdown |
+| Maximum trade frequency | Prevent runaway order loops |
+| Minimum liquidity | Avoid tokens that cannot be exited |
+| Maximum slippage | Reject trades with poor expected execution |
+| Stale-market-data protection | Block decisions based on outdated prices |
+| Duplicate-signal protection | Avoid trading the same event twice |
+| Cooldown periods | Limit repeated entries in the same token |
+| Execution timeouts | Cancel or resolve orders that hang |
+| Emergency shutdown | Halt all trading immediately |
+
+## Order execution and position management
+
+The execution subsystem treats an order as a lifecycle to observe and recover, not a single API call. It handles buy and sell orders, status polling, confirmation, timeouts, retries, rejections, partial fills, slippage, and reconciliation.
+
+```mermaid
+stateDiagram-v2
+    [*] --> SignalDetected
+    SignalDetected --> TradeIntent: passes validation
+    SignalDetected --> Rejected: fails validation
+    TradeIntent --> OrderSubmitted: passes risk checks
+    TradeIntent --> Rejected: blocked by risk engine
+    OrderSubmitted --> PartiallyFilled
+    OrderSubmitted --> Filled
+    OrderSubmitted --> Failed: timeout or rejection
+    PartiallyFilled --> Filled
+    Filled --> PositionOpen
+    PositionOpen --> PositionClosed: exit signal
+    PositionClosed --> [*]
+    Rejected --> [*]
+    Failed --> [*]
 ```
 
-For example, a new announcement from a tracked project or influential account can be detected, analyzed, and compared with current token liquidity, price movement, and volume before a trading decision is generated.
+Tracked position data includes entry and exit price, quantity, exposure, realized and unrealized PnL, fees, slippage, order status, and execution timestamps.
 
-The challenge is not simply detecting a post.
+## Latency measurement
 
-A reliable system must also handle:
-
-* real-time event ingestion
-* signal filtering
-* duplicate events
-* market-data synchronization
-* latency
-* trading decisions
-* position sizing
-* order execution
-* slippage
-* API failures
-* rate limits
-* position reconciliation
-* monitoring and observability
-
-## Key Features
-
-### Real-Time Social Monitoring
-
-Monitor supported social platforms and information sources for potentially market-moving events.
-
-Signals can be based on:
-
-* tracked accounts
-* keywords
-* token symbols
-* project names
-* entities
-* announcements
-* protocol updates
-* exchange announcements
-* breaking news
-
-### Trading Signal Detection
-
-Convert raw social events into structured trading signals.
+Reaction time is a core engineering concern for event-driven trading systems. Timestamps are recorded at each stage so latency can be measured per segment and end to end:
 
 ```text
-Raw Event
-   ↓
-Normalization
-   ↓
-Entity Detection
-   ↓
-Event Classification
-   ↓
-Signal Generation
+source_timestamp → received_timestamp → processed_timestamp → signal_timestamp
+→ decision_timestamp → order_submitted_timestamp → execution_timestamp
 ```
 
-The detection layer separates potentially relevant events from general social-media noise.
+| Segment | Measured from → to |
+| --- | --- |
+| Source to ingestion | `source_timestamp` → `received_timestamp` |
+| Normalization | `received_timestamp` → `processed_timestamp` |
+| Signal processing | `processed_timestamp` → `signal_timestamp` |
+| Decision | `signal_timestamp` → `decision_timestamp` |
+| Order submission | `decision_timestamp` → `order_submitted_timestamp` |
+| Execution | `order_submitted_timestamp` → `execution_timestamp` |
+| **Total reaction time** | `source_timestamp` → `execution_timestamp` |
 
-### Market Signal Validation
+Measurements are persisted for later performance analysis. No latency benchmarks are claimed yet; results will be published once measured on real infrastructure.
 
-A social event does not automatically become a trade.
+## Reliability and observability
 
-Signals can be evaluated against real-time market conditions such as:
+Real-time trading systems must assume external dependencies fail. The design accounts for network failures, API errors, rate limits, delayed, duplicate, or missing events, stale market data, rejected orders, partial fills, and process restarts.
 
-* token price
-* price momentum
-* trading volume
-* liquidity
-* spread
-* volatility
-* market depth
-* onchain activity
-* existing exposure
+Planned reliability mechanisms: idempotent event processing, retries with backoff, timeouts, circuit breakers, persistent state, health checks, reconciliation, structured logging, and metrics.
 
-This allows the trading strategy to consider both **information signals and market conditions**.
-
-### Automated Token Trading
-
-Validated signals can generate trading intents that are passed to the execution layer.
+A trading system should make it possible to understand **why a trade happened**. Planned metrics:
 
 ```text
-Signal
-  ↓
-Strategy
-  ↓
-Risk Check
-  ↓
-Position Sizing
-  ↓
-Order Request
-  ↓
-Execution
-```
-
-The strategy layer is separated from the execution layer so different trading strategies can be tested without rewriting the exchange integration.
-
-### Buy and Sell Execution
-
-The execution subsystem handles:
-
-* buy orders
-* sell orders
-* order status
-* execution confirmation
-* timeouts
-* retries
-* rejected orders
-* partial fills
-* slippage
-* reconciliation
-
-Execution should be observable and recoverable rather than treated as a single API call.
-
-## Event-Driven Architecture
-
-The system follows an event-driven architecture where each stage of the trading pipeline can operate independently.
-
-A simplified event flow:
-
-```text
-SocialEvent
-     ↓
-SignalEvent
-     ↓
-ValidatedSignal
-     ↓
-TradeIntent
-     ↓
-OrderRequest
-     ↓
-OrderUpdate
-     ↓
-PositionUpdate
-```
-
-This architecture makes it easier to:
-
-* scale individual components
-* process events asynchronously
-* isolate failures
-* test individual services
-* measure latency
-* replay historical events
-* add new trading strategies
-
-## Real-Time Data Pipeline
-
-The ingestion pipeline is designed around low-latency event processing.
-
-```text
-External Source
-      ↓
-Event Receiver
-      ↓
-Event Normalizer
-      ↓
-Message / Event Queue
-      ↓
-Signal Processor
-      ↓
-Strategy Engine
-```
-
-Important timestamps can be recorded throughout the pipeline:
-
-```text
-source_timestamp
-received_timestamp
-processed_timestamp
-signal_timestamp
-decision_timestamp
-order_submitted_timestamp
-execution_timestamp
-```
-
-This makes end-to-end reaction time measurable instead of relying on assumptions about system performance.
-
-## Latency Measurement
-
-Latency is a critical engineering concern for event-driven trading systems.
-
-The project can measure:
-
-* source-to-ingestion latency
-* ingestion-to-signal latency
-* signal-processing latency
-* decision latency
-* order-submission latency
-* execution latency
-* total reaction time
-
-Example:
-
-```text
-Post Published
-      ↓
-180 ms
-      ↓
-Event Received
-      ↓
-25 ms
-      ↓
-Signal Generated
-      ↓
-20 ms
-      ↓
-Order Submitted
-      ↓
-130 ms
-      ↓
-Order Filled
-```
-
-These measurements can be persisted for later performance analysis.
-
-## Trading Strategy Engine
-
-Trading strategies are isolated from data ingestion and order execution.
-
-This allows the system to support different strategies without tightly coupling strategy logic to external APIs.
-
-A strategy can receive:
-
-```text
-Market State
-+
-Social Signal
-+
-Portfolio State
-+
-Risk State
-```
-
-and produce:
-
-```text
-TradeIntent
-```
-
-For example:
-
-```text
-BUY
-SELL
-HOLD
-IGNORE
-```
-
-The strategy engine can also incorporate configurable:
-
-* confidence thresholds
-* entry conditions
-* exit conditions
-* position sizing
-* cooldown periods
-* liquidity requirements
-* slippage limits
-
-## Risk Management
-
-Automated trading requires explicit risk controls.
-
-Potential controls include:
-
-* maximum position size
-* maximum portfolio exposure
-* maximum daily loss
-* maximum trade frequency
-* minimum liquidity
-* maximum slippage
-* stale-market-data protection
-* duplicate-signal protection
-* cooldown periods
-* execution timeouts
-* emergency shutdown
-
-Risk management should be enforced independently from individual trading strategies where possible.
-
-## Position Management
-
-The system tracks the lifecycle of positions and orders.
-
-Example state:
-
-```text
-Signal Detected
-      ↓
-Trade Intent
-      ↓
-Order Submitted
-      ↓
-Order Partially Filled
-      ↓
-Order Filled
-      ↓
-Position Open
-      ↓
-Exit Signal
-      ↓
-Position Closed
-```
-
-Tracked data can include:
-
-* entry price
-* exit price
-* quantity
-* exposure
-* realized PnL
-* unrealized PnL
-* fees
-* slippage
-* order status
-* execution timestamps
-
-## Reliability
-
-Real-time trading systems must assume external dependencies can fail.
-
-The system is designed to account for:
-
-* network failures
-* API errors
-* rate limits
-* delayed events
-* duplicate events
-* missing events
-* stale market data
-* rejected orders
-* partial fills
-* process restarts
-
-Potential reliability mechanisms include:
-
-* idempotent event processing
-* retries with backoff
-* timeouts
-* circuit breakers
-* persistent state
-* health checks
-* reconciliation
-* structured logging
-* metrics
-
-## Observability
-
-A trading system should make it possible to understand **why a trade happened**.
-
-Useful metrics include:
-
-```text
-signals_detected_total
-signals_validated_total
-signals_rejected_total
-
-trades_triggered_total
-orders_submitted_total
-orders_filled_total
-orders_failed_total
-
-signal_processing_latency_ms
-decision_latency_ms
-execution_latency_ms
-
-realized_pnl
-unrealized_pnl
+signals_detected_total        signals_validated_total       signals_rejected_total
+trades_triggered_total        orders_submitted_total        orders_filled_total
+orders_failed_total           signal_processing_latency_ms  decision_latency_ms
+execution_latency_ms          realized_pnl                  unrealized_pnl
 slippage_bps
 ```
 
-Structured event logs can connect the original social event with the resulting trade.
+Structured event logs link the originating social event to the resulting trade:
 
 ```text
-[signal]
-source=x
-account=tracked_account
-event=token_announcement
-
-[market]
-token=XYZ
-price=...
-volume=...
-liquidity=...
-
-[strategy]
-action=BUY
-confidence=...
-
-[execution]
-order_id=...
-status=FILLED
+[signal]    source=x account=tracked_account event=token_announcement
+[market]    token=XYZ price=... volume=... liquidity=...
+[strategy]  action=BUY confidence=...
+[execution] order_id=... status=FILLED
 ```
 
-## Backtesting and Research
+## Backtesting and paper trading
 
-Historical events can be used to evaluate signal quality and trading strategies before enabling automated execution.
+**Backtesting** replays historical social events against historical market data: signal reconstruction → strategy simulation → execution simulation → performance analysis. Planned metrics include win rate, average return, maximum drawdown, Sharpe ratio, trade frequency, slippage, execution latency, signal-to-trade conversion, and false-positive rate.
 
-Potential research workflow:
+**Paper trading** runs the full live pipeline (live signal → strategy → risk engine → simulated execution → simulated position) without sending real orders. Validate every strategy in paper mode before enabling live execution.
 
-```text
-Historical Social Events
-          +
-Historical Market Data
-          ↓
-Signal Reconstruction
-          ↓
-Strategy Simulation
-          ↓
-Execution Simulation
-          ↓
-Performance Analysis
-```
+## Technology stack
 
-Metrics can include:
+The stack is planned and may evolve as the project develops.
 
-* win rate
-* average return
-* maximum drawdown
-* Sharpe ratio
-* trade frequency
-* slippage
-* execution latency
-* signal-to-trade conversion
-* false-positive rate
+| Component | Technology | Role |
+| --- | --- | --- |
+| Latency-sensitive services | Rust | Concurrent, high-performance ingestion and execution |
+| Research and strategy | Python | Analytics, data processing, strategy development |
+| Real-time data | WebSockets | Streaming market and social data |
+| Integrations | REST APIs | External service and exchange access |
+| Persistence | PostgreSQL | Events, trades, and positions |
+| State and caching | Redis | Low-latency state |
+| Messaging | Message queues / event streams | Asynchronous event processing |
+| Deployment | Docker | Reproducible environments |
 
-## Paper Trading
+## Project structure
 
-Before live execution, strategies can operate in paper-trading mode.
-
-```text
-Live Signal
-     ↓
-Strategy
-     ↓
-Risk Engine
-     ↓
-Paper Execution
-     ↓
-Simulated Position
-```
-
-This allows the complete event pipeline to be tested without sending real orders.
-
-## Technology
-
-The architecture can support a range of technologies depending on deployment requirements.
-
-Potential technologies include:
-
-* **Rust** - concurrent, high-performance services and latency-sensitive components
-* **Python** - research, analytics, data processing, and strategy development
-* **WebSockets** - real-time data streams
-* **REST APIs** - external service integration
-* **PostgreSQL** - persistent events, trades, and positions
-* **Redis** - caching and low-latency state
-* **Message queues / event streams** - asynchronous event processing
-* **Docker** - reproducible deployment
-
-The technology stack may evolve as the project develops.
-
-## Project Structure
-
-A possible architecture:
+Planned layout:
 
 ```text
 social-signal-trading-bot/
-│
-├── ingestion/
-│   ├── social/
-│   ├── news/
-│   └── market_data/
-│
-├── signals/
-│   ├── detection/
-│   ├── classification/
-│   └── validation/
-│
-├── strategy/
-│   ├── strategies/
-│   ├── risk/
-│   └── position_sizing/
-│
-├── execution/
-│   ├── orders/
-│   ├── exchange/
-│   └── reconciliation/
-│
-├── storage/
-│
-├── monitoring/
-│
-├── backtesting/
-│
+├── ingestion/        # social, news, and market-data connectors
+├── signals/          # detection, classification, validation
+├── strategy/         # strategies, risk engine, position sizing
+├── execution/        # orders, exchange integration, reconciliation
+├── storage/          # persistence layer
+├── monitoring/       # metrics, logging, health checks
+├── backtesting/      # historical replay and simulation
 └── tests/
 ```
 
-## Example End-to-End Flow
+## Getting started
 
-A tracked account publishes a market-relevant announcement.
+Runnable setup instructions will be added once the first end-to-end milestone (ingestion → signal → paper execution) is complete. Watch or star the repository to follow progress.
 
-```text
-1. Post is published
-        ↓
-2. Event is received
-        ↓
-3. Event is normalized
-        ↓
-4. Relevant token is identified
-        ↓
-5. Signal is generated
-        ↓
-6. Market conditions are checked
-        ↓
-7. Trading strategy evaluates signal
-        ↓
-8. Risk limits are checked
-        ↓
-9. Order is submitted
-        ↓
-10. Execution is confirmed
-        ↓
-11. Position is updated
-        ↓
-12. Performance is recorded
-```
+<!--
+TODO: replace this section with real instructions, for example:
+- Prerequisites (language toolchain versions, Docker, database)
+- Installation
+- Configuration (.env.example, tracked accounts, strategy settings)
+- Running in paper-trading mode
+- Running tests
+-->
 
-The complete event chain can then be analyzed to determine signal quality, system latency, execution quality, and trading performance.
+## Security and responsible use
 
-## Why This Project?
+- **Start in paper trading or on a testnet.** Never begin with live funds.
+- **Use dedicated API keys** with trading-only permissions. Disable withdrawals and restrict by IP where the exchange supports it.
+- **Never commit secrets.** Load keys from environment variables or a secrets manager.
+- **Use a dedicated wallet** for onchain trading, funded only with money you can afford to lose.
+- **Respect data-provider terms of service and rate limits** for every social and news source you connect.
+- **Follow local laws and regulations**, including any rules on automated trading and market manipulation.
 
-The project explores the intersection of:
+## Frequently asked questions
 
-* social-media data
-* financial markets
-* algorithmic trading
-* event-driven architecture
-* real-time systems
-* automated execution
-* market-data engineering
-* distributed systems
-* observability
-* reliability engineering
+**What is a social signal trading bot?**
+An automated trading system that detects market-relevant events on social media and news sources and combines them with real-time market data to make trading decisions.
 
-The interesting engineering problem is not simply **“build a bot that watches X.”**
+**Is this an X (Twitter) trading bot?**
+X is one of the target signal sources, alongside news and other feeds. The architecture is source-agnostic: any source can be added by implementing an ingestion connector that emits normalized events.
 
-It is:
+**Does it trade automatically?**
+It is designed to generate trade intents and pass them through a risk engine to an execution layer. Paper trading is the intended default before live execution.
 
-> **How quickly and reliably can an automated system transform an external information event into a validated trading decision and measurable execution?**
+**Can it guarantee profits?**
+No. Social signals can be wrong, manipulated, or delayed, and execution can differ from expected prices. Automated trading can lose money.
+
+**Which exchanges and chains are supported?**
+Not yet decided. The execution layer is separated from strategy logic so exchange and chain integrations can be added independently.
+
+**Can I test strategies without real money?**
+Backtesting and paper trading are on the roadmap for exactly this purpose.
 
 ## Roadmap
 
-* [ ] Social event ingestion
-* [ ] News ingestion
-* [ ] Event normalization
-* [ ] Account monitoring
-* [ ] Signal detection
-* [ ] Signal classification
-* [ ] Market-data integration
-* [ ] Signal validation
-* [ ] Strategy engine
-* [ ] Risk engine
-* [ ] Position sizing
-* [ ] Order execution
-* [ ] Position management
-* [ ] Event persistence
-* [ ] Latency measurement
-* [ ] Observability
-* [ ] Backtesting
-* [ ] Paper trading
-* [ ] Production deployment
+**Phase 1: Ingestion and signals**
+- [ ] Social event ingestion
+- [ ] News ingestion
+- [ ] Event normalization
+- [ ] Account monitoring
+- [ ] Signal detection
+- [ ] Signal classification
+
+**Phase 2: Market data and strategy**
+- [ ] Market-data integration
+- [ ] Signal validation
+- [ ] Strategy engine
+- [ ] Risk engine
+- [ ] Position sizing
+
+**Phase 3: Execution**
+- [ ] Paper trading
+- [ ] Order execution
+- [ ] Position management
+- [ ] Event persistence
+
+**Phase 4: Measurement and research**
+- [ ] Latency measurement
+- [ ] Observability
+- [ ] Backtesting
+
+**Phase 5: Production**
+- [ ] Production deployment
+
+## Contributing
+
+Issues, ideas, and pull requests are welcome. Please open an issue to discuss significant changes before submitting a pull request.
 
 ## Disclaimer
 
-This project is intended for software engineering, research, and educational purposes.
-
-Automated trading involves financial risk. Social signals may be incorrect, manipulated, delayed, or unavailable. Market conditions can change rapidly, and actual execution may differ from expected prices.
-
-Nothing in this repository constitutes financial advice or a recommendation to buy or sell any asset.
+> [!WARNING]
+> This project is intended for software engineering, research, and educational purposes.
+>
+> Automated trading involves financial risk, including the loss of all invested capital. Social signals may be incorrect, manipulated, delayed, or unavailable. Market conditions can change rapidly, and actual execution may differ from expected prices. Past or simulated performance does not indicate future results.
+>
+> Nothing in this repository constitutes financial advice or a recommendation to buy or sell any asset.
 
 ## License
 
-See `LICENSE` for license information.
+See [LICENSE](LICENSE) for license information.
